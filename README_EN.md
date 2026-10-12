@@ -1,4 +1,4 @@
-# dsh-download-guard
+# dsh-ops-guard
 
 Turns "downloads must go through aria2" from **advice in a skill** into **runtime enforcement**.
 
@@ -30,6 +30,51 @@ recognised as a download → { kind: 'deny', reason: '<ready-to-run aria2 comman
     ↓
 the call is refused and the reason is shown to the model (the body never ran)
 ```
+
+## The search guard
+
+The same argument applies to file search: the `everything-cli` skill states the rule in prose, and an agent holding a built-in `glob` tool has **no reason** to reach for es.exe. The rule has to live in the runtime.
+
+Everything keeps a resident full-disk index (measured: **2.5M files**); `es.exe` answers in milliseconds, while the built-in `glob` makes ripgrep walk the tree on every call.
+
+### Only glob is redirected, never grep
+
+The built-in search surface is **two** tools, and they are **not** equally replaceable:
+
+| Tool | Finds by | Replaced | Basis |
+|---|---|---|---|
+| `glob` | **filename / path** | ✅ yes | that is exactly what Everything does |
+| `grep` | **file content** | ❌ no | see below |
+
+**Why grep is left alone**: Everything's content search requires the user to opt into content indexing, which was **measured as off** on this machine:
+
+```
+es.exe "content:dsh-ops-guard"        → no output
+es.exe -get-result-count "content:..." → no output
+```
+
+Denying grep in that state would replace *slow* content search with *no* content search — far worse than the problem it prevents. The guard's own rule applies: **prefer a missed optimisation over a blocked workflow.** The refusal text says explicitly that grep is unaffected, so the model does not route around it.
+
+### glob → es.exe mapping
+
+The pattern language needs almost no translation (`**` is recursive in both); only the argument name differs:
+
+| built-in glob | es.exe |
+|---|---|
+| `pattern: "**/*.ts"` | `es.exe "**/*.ts"` |
+| `path: "D:\proj"` | `-path "D:\proj"` |
+| no `path` (= workspace) | `-path <session workspace>` |
+
+Two details confirmed by measurement:
+
+- **`**` must be preserved**: `src/**/*.ts` matches `src/__deep/probe.ts`, while `src\*.ts` does **not** recurse. The pattern's shape is passed through, never flattened.
+- **Globs must be quoted**: an unquoted `*.ts` is expanded by the shell before es.exe ever sees it.
+
+### Why es.exe is probed once, at load
+
+`tools/pre-execute` runs in front of **every** tool call, so probing for es.exe (a dozen directory stats) inside the hook would be waste. It is resolved once at mount instead.
+
+The probe deliberately does **not** check whether Everything is running: es.exe talks to it over IPC and fails at call time if the service is down. Spawning a process from a pre-execute hook is the wrong place for that — the model sees the real error when it runs the command, which beats a guard guessing.
 
 ### Why not the approval hook
 
@@ -67,7 +112,7 @@ Detection is **biased toward false negatives**: blocking an ordinary command is 
 ## What the model sees when blocked
 
 ```
-BLOCKED by dsh-download-guard: this command downloads a file to disk
+BLOCKED by dsh-ops-guard: this command downloads a file to disk
 (matched: curl-output), and downloads must go through the local aria2 engine
 (Motrix Next) so they are multithreaded, resumable and visible in the download manager.
 
@@ -123,7 +168,7 @@ node scripts/aria2-dl.cjs --list
 ## Install
 
 ```bash
-cd ~/.dsh && dsh plugin --profile <your-profile> add "dsh-download-guard@github:BeiWay1145/dsh-download-guard"
+cd ~/.dsh && dsh plugin --profile <your-profile> add "dsh-ops-guard@github:BeiWay1145/dsh-ops-guard"
 ```
 
 **Restart DSH** afterwards.

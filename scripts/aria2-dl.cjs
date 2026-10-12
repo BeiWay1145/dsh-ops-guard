@@ -2,7 +2,7 @@
 /**
  * aria2-dl — forward a download to the local aria2-next (Motrix Next) JSON-RPC.
  *
- * Bundled with dsh-download-guard so the guard's suggested command actually
+ * Bundled with dsh-ops-guard so the guard's suggested command actually
  * exists on a machine that installed only this package. The guard denies
  * bypass downloads and points at THIS file; without it in the repo, the guard
  * would refuse a download and then name a script the user does not have.

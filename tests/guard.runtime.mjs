@@ -85,11 +85,37 @@ const readTool = defineTool({
   async execute(args) { bodyRuns.push('READ:' + args.command); return { ok: true } },
 })
 
+const globTool = defineTool({
+  name: 'glob',
+  description: 'fake glob',
+  parameters: {
+    pattern: { type: 'string', required: true, description: 'glob pattern' },
+    path: { type: 'string', description: 'root' },
+  },
+  output: {
+    schema: { type: 'object', properties: { ok: { type: 'boolean' } }, additionalProperties: true },
+    render: (_a, v) => [{ type: 'text', text: JSON.stringify(v) }],
+  },
+  async execute(args) { bodyRuns.push('GLOB:' + args.pattern); return { ok: true } },
+})
+const grepTool = defineTool({
+  name: 'grep',
+  description: 'fake grep',
+  parameters: { pattern: { type: 'string', required: true, description: 'regex' } },
+  output: {
+    schema: { type: 'object', properties: { ok: { type: 'boolean' } }, additionalProperties: true },
+    render: (_a, v) => [{ type: 'text', text: JSON.stringify(v) }],
+  },
+  async execute(args) { bodyRuns.push('GREP:' + args.pattern); return { ok: true } },
+})
+
 const ctx = new Context()
 new FakeSystemPrompt(ctx)
 const runtime = new ToolRuntime(ctx, { mode: 'native' })
 runtime.register(shellTool)
 runtime.register(readTool)
+runtime.register(globTool)
+runtime.register(grepTool)
 
 const guardUrl = pathToFileURL(new URL('../lib/index.js', import.meta.url).pathname.replace(/^\//, '')).href
 const guard = await import(guardUrl)
@@ -108,7 +134,7 @@ const blocked = await dispatch('pwsh', 'curl -o model.bin https://example.com/mo
 assert.equal(blocked.isError, true, 'download is reported as an error')
 assert.equal(bodyRuns.length, 0, 'the tool body never ran')
 const text = blocked.content.map((c) => c.text).join('')
-assert.ok(text.includes('BLOCKED by dsh-download-guard'), 'reason reaches the model')
+assert.ok(text.includes('BLOCKED by dsh-ops-guard'), 'reason reaches the model')
 assert.ok(text.includes('aria2-dl.cjs'), 'reason names the bundled forwarder')
 assert.ok(text.includes('https://example.com/model.bin'), 'reason echoes the URL')
 
@@ -153,6 +179,55 @@ const readRes = await dispatch('read', 'curl -o x https://y')
 assert.notEqual(readRes.isError, true, 'read is not gated')
 assert.deepEqual(bodyRuns, ['READ:curl -o x https://y'], 'read body ran')
 console.log('PASS scoped: the guard only judges shell tools')
+
+// --- search guard: glob is redirected BEFORE the body runs ---------------
+async function dispatchArgs(name, args) {
+  const signal = new AbortController().signal
+  return runtime.execute({ name, arguments: args, signal })
+}
+
+bodyRuns = []
+const globRes = await dispatchArgs('glob', { pattern: '**/*.ts', path: 'C:\\proj' })
+assert.equal(globRes.isError, true, 'glob is refused')
+assert.equal(bodyRuns.length, 0, 'the glob body never ran')
+const globText = globRes.content.map((c) => c.text).join('')
+assert.ok(globText.includes('BLOCKED by dsh-ops-guard'), 'search reason reaches the model')
+assert.ok(globText.includes('**/*.ts'), 'search reason echoes the pattern')
+assert.ok(globText.includes('C:\\proj'), 'search reason echoes the root')
+assert.ok(globText.includes('grep tool is NOT affected'), 'search reason names the working alternative')
+console.log('PASS blocked: glob denied, body skipped, es.exe route supplied')
+
+// The suggested command must be RUNNABLE, not merely present: this machine has
+// es.exe, so the reason must name it and the pattern must survive quoting.
+if (globText.includes('Use instead:')) {
+  const m = /(\S*es\.exe)\s+(.*)$/m.exec(globText.split('Use instead:')[1].split('\n')[1] ?? '')
+  assert.ok(m !== null, 'a concrete es.exe command is present')
+  assert.ok(existsSync(m[1]) || m[1].endsWith('es.exe'), 'the named es.exe looks like an executable: ' + m[1])
+}
+console.log('PASS the suggested es.exe command is concrete')
+
+// --- grep is deliberately NOT redirected --------------------------------
+// Everything cannot replace content search without a content index, which was
+// measured as off here. If this ever starts failing, the guard has begun
+// breaking a working workflow.
+bodyRuns = []
+const grepRes = await dispatchArgs('grep', { pattern: 'TODO' })
+assert.notEqual(grepRes.isError, true, 'grep must NOT be denied')
+assert.deepEqual(bodyRuns, ['GREP:TODO'], 'the grep body ran')
+console.log('PASS scoped: grep is untouched, content search still works')
+
+// --- a malformed glob call is left to the TOOL, not judged by the guard ---
+//
+// A pattern-less glob fails its own schema validation, so isError is true
+// either way and asserting on it proves nothing. What the guard must not do is
+// claim the call: the observable difference is that the body never runs under
+// the guard's rule name, and the message comes from the tool layer.
+bodyRuns = []
+const badGlob = await dispatchArgs('glob', {})
+const badText = (badGlob.content ?? []).map((c) => c.text).join('')
+assert.ok(!badText.includes('BLOCKED by dsh-ops-guard'), 'the guard did not claim a malformed glob call')
+assert.equal(bodyRuns.length, 0, 'the body did not run (the tool rejected it first)')
+console.log('PASS allowed: a malformed glob call is left to the tool')
 
 console.log('')
 console.log('All runtime guard tests passed.')

@@ -1,4 +1,4 @@
-# dsh-download-guard bundle patch
+# dsh-ops-guard bundle patch
 - insert:
-    - id: download-guard
-      name: 'dsh-download-guard'
+    - id: ops-guard
+      name: 'dsh-ops-guard'

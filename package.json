@@ -1,23 +1,25 @@
 {
-  "name": "dsh-download-guard",
+  "name": "dsh-ops-guard",
   "version": "0.1.0",
-  "description": "DeepSeek Harness plugin: force every large-file download through the local aria2 engine by denying shell download commands at the tool pre-execute hook. Returns the exact aria2 replacement command. 强制下载统一走 aria2 的 DSH 插件。",
+  "description": "DeepSeek Harness plugin: route downloads through aria2 and file search through Everything, by denying the built-in alternatives at the tool pre-execute hook and returning the exact replacement command. 强制下载走 aria2、文件搜索走 Everything 的 DSH 插件。",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/BeiWay1145/dsh-download-guard.git"
+    "url": "git+https://github.com/BeiWay1145/dsh-ops-guard.git"
   },
-  "homepage": "https://github.com/BeiWay1145/dsh-download-guard",
+  "homepage": "https://github.com/BeiWay1145/dsh-ops-guard",
   "bugs": {
-    "url": "https://github.com/BeiWay1145/dsh-download-guard/issues"
+    "url": "https://github.com/BeiWay1145/dsh-ops-guard/issues"
   },
   "keywords": [
     "dsh",
     "dsh-plugin",
     "download",
     "aria2",
-    "guard",
+    "search",
+    "everything",
+    "es",
     "deepseek-harness",
     "motrix"
   ],
@@ -51,7 +53,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/build.mjs && node tests/detect.test.mjs && node tests/guard.runtime.mjs"
+    "test": "node scripts/build.mjs && node tests/detect.test.mjs && node tests/search.test.mjs && node tests/guard.runtime.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

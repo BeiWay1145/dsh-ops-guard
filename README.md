@@ -1,6 +1,13 @@
-# dsh-download-guard
+# dsh-ops-guard
 
-把「下载必须走 aria2」从**技能里的建议**变成**运行时的强制**。
+把两条**技能里的建议**变成**运行时的强制**：
+
+| 守卫 | 规则 | 替代通道 |
+|---|---|---|
+| **下载守卫** | 大文件下载必须走 aria2 | `aria2-dl.cjs` → aria2-next (Motrix Next) |
+| **搜索守卫** | 按文件名找文件必须走 Everything | `es.exe` → voidtools Everything |
+
+两者共用同一套机制：在 `tools/pre-execute` 拦截，拒绝并给出**可直接粘贴的替代命令**。
 
 ## 为什么需要它
 
@@ -30,6 +37,53 @@ tools/pre-execute 钩子触发
     ↓
 工具被拒绝，reason 原样呈现给模型（工具体从未执行）
 ```
+
+## 搜索守卫
+
+同样的论证适用于文件搜索：`everything-cli` 技能把规则写在提示词里，而**手上有内置 `glob` 工具的 agent 没有任何理由去用 es.exe**。规则必须落到运行时。
+
+Everything 是本机常驻的全盘实时索引（**250 万文件**），`es.exe` 毫秒级返回；内核的 `glob` 则每次调用都要让 ripgrep 真的走一遍目录树。
+
+### ⚠️ 只拦 glob，不拦 grep —— 这是实测结论
+
+内置的搜索工具是**两个**，它们的可替代性**完全不同**：
+
+| 工具 | 能力 | 能否替代 | 依据 |
+|---|---|---|---|
+| `glob` | 按**文件名/路径**找 | ✅ **替代** | Everything 就是干这个的 |
+| `grep` | 按**文件内容**找 | ❌ **不替代** | 见下 |
+
+**为什么不动 grep**：Everything 的内容搜索需要用户在 Everything 里**显式开启内容索引**，而本机实测**是关闭的**：
+
+```
+es.exe "content:dsh-ops-guard"        → 无任何输出
+es.exe -get-result-count "content:..."     → 无任何输出
+```
+
+在此状态下拦截 grep，等于把**慢的内容搜索变成没有内容搜索**——比它要防止的问题严重得多。这与下载守卫自己的原则一致：**宁可漏掉一次优化，也不阻断一条工作流。**
+
+被拒时给出的理由里**明确告诉模型 grep 没被拦**，避免它转向别处绕路。
+
+### glob → es.exe 的映射
+
+模式语言几乎不用翻译（`**` 在两边都是递归的），只是参数名不同：
+
+| 内置 glob | es.exe |
+|---|---|
+| `pattern: "**/*.ts"` | `es.exe "**/*.ts"` |
+| `path: "D:\proj"` | `-path "D:\proj"` |
+| 省略 path（=工作区） | `-path <会话工作区>` |
+
+实测确认的两个细节：
+
+- **`**` 必须保留**：`src/**/*.ts` 能匹配 `src/__deep/probe.ts`，而 `src\*.ts` **不递归**。所以模式形状原样传递，不做扁平化。
+- **通配符要加引号**：不加引号的 `*.ts` 会被 shell 先展开，es.exe 根本看不到它。
+
+### 为什么 es.exe 只在加载时探测一次
+
+`tools/pre-execute` 在**每次工具调用**前面跑，探测 es.exe（要 stat 十几个目录）放在钩子里是浪费。改为插件挂载时解析一次。
+
+探测**不检查 Everything 是否在运行**：es.exe 通过 IPC 与 Everything 通信，服务没开时会在调用时报错。在 pre-execute 钩子里 spawn 一个进程去探活是错的位置——模型执行时会看到真实错误，比守卫去猜更有用。
 
 ### 为什么不用审批钩子
 
@@ -67,7 +121,7 @@ const answer = ... this.ctx.waterfall(..., "approval/request", ...)   // ← 永
 ## 拦截后模型看到什么
 
 ```
-BLOCKED by dsh-download-guard: this command downloads a file to disk
+BLOCKED by dsh-ops-guard: this command downloads a file to disk
 (matched: curl-output), and downloads must go through the local aria2 engine
 (Motrix Next) so they are multithreaded, resumable and visible in the download manager.
 
@@ -116,7 +170,7 @@ node scripts/aria2-dl.cjs --list
 ## 安装
 
 ```bash
-cd ~/.dsh && dsh plugin --profile <your-profile> add "dsh-download-guard@github:BeiWay1145/dsh-download-guard"
+cd ~/.dsh && dsh plugin --profile <your-profile> add "dsh-ops-guard@github:BeiWay1145/dsh-ops-guard"
 ```
 
 安装后**重启 DSH** 生效。
