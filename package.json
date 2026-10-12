@@ -53,7 +53,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/build.mjs && node tests/detect.test.mjs && node tests/search.test.mjs && node tests/guard.runtime.mjs"
+    "test": "node scripts/build.mjs && node tests/detect.test.mjs && node tests/search.test.mjs && node tests/everything-ipc.test.mjs && node tests/guard.runtime.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

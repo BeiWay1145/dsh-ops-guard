@@ -215,32 +215,34 @@ cd ~/.dsh && dsh plugin --profile <your-profile> add "dsh-ops-guard@github:BeiWa
 | 跨项目 `D:\VibeCoding` | 631 ms | 49 ms | **es 快 13x** |
 | 整盘 `D:\` | 7726 ms | 51 ms | **es 快 152x** |
 
-**能否消除 es.exe 的固定开销？** **能，而且已证实。**
+**能否消除 es.exe 的固定开销？** **能，协议已完整逆向并实现。**
 
-我最初判断"命名管道是私有二进制协议，需逆向，不可行"。**这个判断是错的**——
-用 REA + Ghidra 逆向 `es.exe` 后，协议已完全破解：
+我最初判断"命名管道是私有二进制协议，需逆向，不可行"。**这个判断是错的** ——
+用 REA + Ghidra 逆向 `es.exe` 后，协议、记录解码全部打通，客户端已可运行：
 
 ```
 管道 : \\.\PIPE\Everything IPC
-请求 : [i32 cmd][i32 len][payload]
-响应 : 循环 { [i32 status][i32 len][body] }  status: 100=中间帧, 200=结束, 404=错误
-搜索 : cmd = 7
+请求 : [i32 cmd][i32 len][payload]     cmd=7 为搜索
+响应 : 循环 { [i32 status][i32 len][body] }  100=中间帧 200=末帧 404=错误
+记录 : [u8 flags(1=目录)][varint 路径长度][utf8 路径]
 ```
 
-实测对比：
+同口径实测（**这才是可比的数字**）：
 
-| 方式 | 中位耗时 |
-|---|---|
-| **IPC 直连** | **0.3 ms** |
-| es.exe | 47.8 ms |
+| 查询 | IPC 客户端 | es.exe | 加速 |
+|---|---|---|---|
+| `*.md` | 5.9 ms | 38.4 ms | 6.5x |
+| `package.json` | 12.8 ms | 50.6 ms | 3.9x |
+| 无匹配 | 13.0 ms | 48.1 ms | 3.7x |
 
-**约 160 倍。**
+**约 4–6 倍**，不是我先前误报的 160 倍。正确性已验证：`package.json` 结果数与 es.exe
+**完全一致（7199）**，flags 与真实文件系统 **123/123 条一致**。
 
 完整协议见 [docs/everything-ipc-protocol.md](docs/everything-ipc-protocol.md)，
-此前的可行性调查（含被推翻的结论）见 [docs/resident-query-investigation.md](docs/resident-query-investigation.md)。
+被推翻的早期调查见 [docs/resident-query-investigation.md](docs/resident-query-investigation.md)。
 
-⚠️ **尚未接入插件**：通道与帧格式已确认，但**结果集记录的完整解码**还需要工程工作量。
-当前守卫仍使用 es.exe。
+⚠️ **尚未接入守卫**：客户端已实现并测试（`src/everything-ipc.ts`，22/22 通过），
+但守卫仍在用 es.exe。切换需要 es.exe 回落路径，见文档「风险」一节。
 
 ## 已知边界
 
