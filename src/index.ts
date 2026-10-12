@@ -35,8 +35,9 @@
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { inspect } from './detect.ts'
-import { inspectSearch, searchDenialMessage } from './search.ts'
+import { inspectSearch, searchDenialMessage, searchAnsweredMessage, buildEverythingQuery } from './search.ts'
 import { findEsExe } from './es.ts'
+import { searchEverything } from './everything-ipc.ts'
 
 /**
  * Plugin identifier used in log lines and refusal text.
@@ -146,6 +147,18 @@ export function apply(ctx: PluginContext): void {
     }
 
     // --- guard 2: file search must go through Everything -------------------
+    //
+    // This guard tries the RESIDENT pipe first, and that ordering is the whole
+    // design. Handing the model a command to run costs it a round trip plus a
+    // process start, and measured on this machine a bare `node -e ""` is 58.5 ms
+    // against es.exe's 38.9 ms — so a CLI wrapper would be SLOWER than what it
+    // replaced. The pipe only pays off from inside a live process, which the
+    // guard is, so the guard answers the query itself and puts the results in
+    // the denial. Nothing is left for the model to execute.
+    //
+    // Every failure here degrades to the original command suggestion. A search
+    // guard that stops working because Everything is not running would trade a
+    // slow search for no search.
     let searchHit: ReturnType<typeof inspectSearch>
     try {
       const name = typeof exec?.name === 'string' ? exec.name : ''
@@ -154,15 +167,48 @@ export function apply(ctx: PluginContext): void {
       const workspace = workspaceRootOf(exec)
       searchHit = inspectSearch(name, exec?.arguments)
       if (searchHit !== undefined) {
-        const reason = searchDenialMessage(searchHit, esPath, workspace)
-        try {
-          ctx.logger?.info(
-            PLUGIN_NAME + ': redirected ' + searchHit.rule + ' -> es.exe'
-              + (esPath === undefined ? ' (es.exe NOT FOUND)' : ''),
-          )
-        } catch {
-          /* logging must never affect the decision */
+        let reason: string | undefined
+
+        {
+          const started = Date.now()
+          try {
+            // Scoping rides inside the query: the pipe has no -path option.
+            const query = buildEverythingQuery(searchHit.pattern, searchHit.path, workspace)
+            const answer = await searchEverything(query, { count: 50, timeoutMs: 2500 })
+            reason = searchAnsweredMessage(
+              searchHit,
+              answer,
+              Date.now() - started,
+              esPath,
+              workspace,
+            )
+            try {
+              ctx.logger?.info(
+                PLUGIN_NAME + ': answered ' + searchHit.rule + ' over IPC in '
+                  + (Date.now() - started) + 'ms (' + answer.total + ' matches)',
+              )
+            } catch {
+              /* logging must never affect the decision */
+            }
+          } catch {
+            // Pipe unavailable, timed out, or the protocol changed. Fall through
+            // to the command suggestion rather than failing the tool call.
+            reason = undefined
+          }
         }
+
+        if (reason === undefined) {
+          reason = searchDenialMessage(searchHit, esPath, workspace)
+          try {
+            ctx.logger?.info(
+              PLUGIN_NAME + ': redirected ' + searchHit.rule + ' -> es.exe'
+                + (esPath === undefined ? ' (es.exe NOT FOUND)' : ''),
+            )
+          } catch {
+            /* logging must never affect the decision */
+          }
+        }
+
         return { kind: 'deny', reason }
       }
     } catch {

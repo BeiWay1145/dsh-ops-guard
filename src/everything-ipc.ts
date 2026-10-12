@@ -278,6 +278,9 @@ export async function searchEverything(
         return
       }
     })
-    sock.on('error', (e) => { clearTimeout(timer); finish(() => reject(new Error('Everything IPC unavailable: ' + (e.code ?? e.message)))) })
+        sock.on('error', (err: NodeJS.ErrnoException) => {
+      clearTimeout(timer)
+      finish(() => reject(new Error('Everything IPC unavailable: ' + (err.code ?? err.message))))
+    })
   })
 }

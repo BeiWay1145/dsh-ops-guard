@@ -215,34 +215,56 @@ cd ~/.dsh && dsh plugin --profile <your-profile> add "dsh-ops-guard@github:BeiWa
 | 跨项目 `D:\VibeCoding` | 631 ms | 49 ms | **es 快 13x** |
 | 整盘 `D:\` | 7726 ms | 51 ms | **es 快 152x** |
 
-**能否消除 es.exe 的固定开销？** **能，协议已完整逆向并实现。**
+**能否消除 es.exe 的固定开销？** **能，已经接入并实测。**
 
 我最初判断"命名管道是私有二进制协议，需逆向，不可行"。**这个判断是错的** ——
-用 REA + Ghidra 逆向 `es.exe` 后，协议、记录解码全部打通，客户端已可运行：
+协议已完整逆向（`src/everything-ipc.ts`），并接入守卫：
+
+**守卫不再只是"拒绝 + 给命令"，而是直接返回结果。**
 
 ```
 管道 : \\.\PIPE\Everything IPC
-请求 : [i32 cmd][i32 len][payload]     cmd=7 为搜索
+请求 : [i32 cmd][i32 len][payload]      cmd=7 搜索
 响应 : 循环 { [i32 status][i32 len][body] }  100=中间帧 200=末帧 404=错误
-记录 : [u8 flags(1=目录)][varint 路径长度][utf8 路径]
+记录 : [u8 flags(1=目录)][varint 长度][utf8 路径]
 ```
 
-同口径实测（**这才是可比的数字**）：
+### 为什么是"守卫自己执行"而不是"给条命令"
 
-| 查询 | IPC 客户端 | es.exe | 加速 |
-|---|---|---|---|
-| `*.md` | 5.9 ms | 38.4 ms | 6.5x |
-| `package.json` | 12.8 ms | 50.6 ms | 3.9x |
-| 无匹配 | 13.0 ms | 48.1 ms | 3.7x |
+实测：
 
-**约 4–6 倍**，不是我先前误报的 160 倍。正确性已验证：`package.json` 结果数与 es.exe
-**完全一致（7199）**，flags 与真实文件系统 **123/123 条一致**。
+```
+node -e ""          58.5 ms   ← 裸进程启动
+es.exe              38.9 ms
+```
+
+**Node 启动比 es.exe 还慢**，所以 CLI 包装方案会适得其反。
+常驻 IPC 只在**已存活的进程内**才有意义 —— 守卫正是这样的进程。
+
+### 延迟实测（9 次中位数）
+
+| 查询 | 内置 glob (rg) | es.exe | **守卫 + IPC** | vs rg | vs es |
+|---|---|---|---|---|---|
+| 单项目 `**/*.md` | 18.2 ms | 41.4 ms | **6.7 ms** | 2.7x | 6.2x |
+| 单项目 `**/*.ts` | 22.1 ms | 43.8 ms | **7.0 ms** | 3.2x | 6.3x |
+| 单项目 `**/*.json` | 18.8 ms | 42.8 ms | **6.3 ms** | 3.0x | 6.8x |
+| 跨项目 `D:/VibeCoding` | 483.6 ms | 43.3 ms | **6.9 ms** | 70x | 6.3x |
+
+**关键**：守卫不仅比 es.exe 快 6.3 倍，还**省掉一次模型往返** ——
+结果直接写在拒绝理由里，模型无需再执行任何命令。
+
+```bash
+BENCH_REPS=9 node bench/guard-latency.mjs
+```
+
+> ⚠️ 基准里 es.exe 那一列**必须**用 `translateToEsPattern` 翻译后的模式。
+> 用原始 `**/*.ts` 会得到 1400ms —— 那是本项目早已修复的缺陷，拿它当对照是立稻草人。
 
 完整协议见 [docs/everything-ipc-protocol.md](docs/everything-ipc-protocol.md)，
 被推翻的早期调查见 [docs/resident-query-investigation.md](docs/resident-query-investigation.md)。
 
-⚠️ **尚未接入守卫**：客户端已实现并测试（`src/everything-ipc.ts`，22/22 通过），
-但守卫仍在用 es.exe。切换需要 es.exe 回落路径，见文档「风险」一节。
+⚠️ **回落路径**：Everything 未运行时，守卫自动退回"给命令"模式（`searchDenialMessage`），
+不会让搜索失效。
 
 ## 已知边界
 

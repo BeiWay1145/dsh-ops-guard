@@ -213,3 +213,115 @@ export function searchDenialMessage(
   )
   return lines.join('\n')
 }
+
+/**
+ * Render an answer that was already computed, instead of a command to run.
+ *
+ * WHY THIS IS THE POINT OF THE WHOLE DETOUR:
+ *
+ * A refusal that hands over a command still costs the model a round trip and a
+ * process start. Measured on this machine:
+ *
+ *     es.exe, full process run            38.9 ms
+ *     node -e "", bare process start      58.5 ms
+ *
+ * So wrapping the pipe in a CLI would be WORSE than es.exe, not better — node
+ * itself costs more to start than es.exe does. The resident client only pays off
+ * when it runs INSIDE a process that is already alive, which is exactly what the
+ * guard is. The guard cannot mutate the call (pre-execute may only allow, deny,
+ * ask or cancel — verified in dsh-tools lib/index.js), so the way to spend that
+ * advantage is to put the finished ANSWER in the denial.
+ *
+ * The model then reads results instead of running anything: one step, no
+ * subprocess, and the answer is already the right shape.
+ *
+ * @param hit - the redirected search.
+ * @param result - the records the resident client returned.
+ * @param elapsedMs - how long the query took, for honesty about cost.
+ * @returns the denial text carrying the results.
+ */
+export function searchAnsweredMessage(
+  hit: SearchHit,
+  result: { total: number; records: { path: string; directory: boolean }[] },
+  elapsedMs: number,
+  esPath?: string,
+  defaultRoot?: string,
+): string {
+  const shown = result.records.slice(0, 50)
+  const lines = [
+    'BLOCKED by dsh-ops-guard: the built-in glob tool was not run.',
+    '(matched: ' + hit.rule + ' — pattern ' + JSON.stringify(hit.pattern)
+      + (hit.path === undefined ? '' : ', path ' + JSON.stringify(hit.path)) + ')',
+    '',
+    'Everything already answered this query over its resident IPC pipe in '
+      + elapsedMs.toFixed(1) + ' ms, so there is nothing for you to run:',
+    '',
+    '  total matches: ' + result.total + (result.total > shown.length
+      ? '   (showing first ' + shown.length + ')' : ''),
+  ]
+  if (shown.length === 0) {
+    lines.push('', '  (no files matched)')
+  } else {
+    lines.push('')
+    for (const rec of shown) lines.push('  ' + (rec.directory ? '[dir] ' : '      ') + rec.path)
+  }
+  lines.push(
+    '',
+    'If you need a DIFFERENT query, es.exe speaks the same pattern language:',
+    '  ' + renderCommand(esPath ?? 'es.exe', esArgvFor(hit, defaultRoot)),
+    '',
+    'The grep tool is NOT affected: content search stays on the built-in tool.',
+  )
+  return lines.join('\n')
+}
+
+/**
+ * Build the Everything query string for one glob call.
+ *
+ * The IPC pipe has no -path option — that flag belongs to the es.exe command
+ * line and does not exist in the wire format (the cmd-7 payload carries flags,
+ * the query, an offset and a count, and nothing else). Scoping therefore has to
+ * ride inside the query itself, and Everything supports exactly that:
+ *
+ *   es -path D:/proj "*.md"         11 results
+ *   query:  path:D:\proj *.md       11 results, identical set
+ *
+ * Verified by comparing the full result lists rather than the counts: 11 vs 11,
+ * zero records unique to either side. Without this the guard would answer a
+ * request scoped to one project with matches from the entire disk — a wrong
+ * answer, which is worse than the refusal it replaced.
+ *
+ * The pattern itself is passed through translateToEsPattern first, because the
+ * same trap applies here as on the command line: -path is already recursive,
+ * and a leading **<slash> segment makes Everything walk the whole drive (or,
+ * with a directory prefix, match nothing at all).
+ *
+ * @param pattern - the glob pattern the model asked for.
+ * @param root - the search root, when one is known.
+ * @returns the query string for the pipe.
+ */
+export function buildEverythingQuery(
+  pattern: string,
+  root: string | undefined,
+  workspace?: string,
+): string {
+  const translated = translateToEsPattern(pattern, root)
+  let scope = translated.root
+  if (scope === undefined || scope === '') return translated.pattern
+
+  // Resolve a relative root against the session workspace before it reaches the
+  // query. Everything does NOT resolve relative paths the way a shell does:
+  // measured, "path:. *.md" returned 24693 results — the entire disk — rather
+  // than the current directory. A guard that answered a project-scoped question
+  // with whole-disk results would be handing over a wrong answer that looks
+  // authoritative, so an unresolvable root is safer dropped than guessed.
+  const isAbsolute = /^[A-Za-z]:[\\/]/.test(scope) || scope.startsWith('\\\\')
+  if (!isAbsolute) {
+    if (workspace === undefined || workspace === '') return translated.pattern
+    // "." and "./" mean the workspace itself; anything else is a subdirectory.
+    const trimmed = scope.replace(/^[.][\\/]?/, '').replace(/[\\/]+$/, '')
+    const base = workspace.replace(/[\\/]+$/, '')
+    scope = trimmed === '' ? base : base + '\\' + trimmed
+  }
+  return 'path:' + scope + ' ' + translated.pattern
+}
