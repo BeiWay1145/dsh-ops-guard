@@ -203,6 +203,26 @@ cd ~/.dsh && dsh plugin --profile <your-profile> add "dsh-ops-guard@github:BeiWa
 
 安装后**重启 DSH** 生效。
 
+## 性能边界：为什么不是普遍加速
+
+内置 `glob` 用 ripgrep **每次调用都走目录树**；es.exe 走后端索引，但**每次调用都要启动一个进程**（实测 ~36ms 纯启动 + ~15ms IPC/查询）。
+
+**所以守卫不是普遍加速**：
+
+| 场景 | rg（内核 glob） | es.exe | 谁快 |
+|---|---|---|---|
+| 单项目 | 19–30 ms | 48 ms | **rg 快 1.6–2.5x** |
+| 跨项目 `D:\VibeCoding` | 631 ms | 49 ms | **es 快 13x** |
+| 整盘 `D:\` | 7726 ms | 51 ms | **es 快 152x** |
+
+**能否消除 es.exe 的固定开销？** 命名管道的连接实测只要 **0.1 ms**，理论上可行；但三条常驻路径在本机**均不通**：
+
+- `\\.\pipe\Everything IPC` 接受连接后**不响应任何格式**（私有二进制协议，需逆向）
+- ETP 服务器与 HTTP 服务器**都未启用**（两份 ini 里都没有对应键）
+- es.exe **没有常驻模式**（`-help` 无 server/daemon/pipe 选项）
+
+完整实测数据见 [docs/resident-query-investigation.md](docs/resident-query-investigation.md)。
+
 ## 已知边界
 
 - **拦不住「命令内部的下载」**：`python script.py` 里用 `urllib` 下载，钩子看到的是 `python script.py`，看不到它内部在做什么。彻底收口需要本地代理层，不在本插件范围。
