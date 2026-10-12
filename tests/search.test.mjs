@@ -21,7 +21,7 @@ import {
   searchDenialMessage,
   UNTOUCHED_SEARCH_TOOL,
 } from '../src/search.ts'
-import { findEsExe } from '../src/es.ts'
+import { findEsExe, ES_NAMES_WIN32, ES_NAMES_POSIX } from '../src/es.ts'
 
 let passed = 0
 let failed = 0
@@ -146,13 +146,47 @@ const foundOnPath = findEsExe({
   env: { ...fakeEnv, PATH: 'C:\\tools' },
   platform: 'win32',
   exists: (p) => p.replace(/\\/g, '/').toLowerCase() === 'c:/tools/es.exe',
+  isFile: () => true,
 })
 check('probe finds a file on PATH', foundOnPath !== undefined, true)
-
 check('probe returns undefined when nothing exists', findEsExe({ env: fakeEnv, exists: () => false }), undefined)
 check('probe never throws on a bad env', (() => {
   try { return typeof findEsExe({ env: {}, exists: () => false }) } catch { return 'threw' }
 })(), 'undefined')
+
+// --- the directory-masquerading-as-es.exe bug -----------------------------
+//
+// On this machine PATH contains C:\\Program Files\\PowerShell\\7, which ships a
+// LOCALIZATION directory literally named "es" (Spanish). An earlier probe
+// joined that directory with the bare name 'es', found an existing path, and
+// accepted it — so the guard told the model to execute a folder:
+//
+//   "C:\\Program Files\\PowerShell\\7\\es" -n 50 -path ... "*.md"
+//
+// A command that looks authoritative and cannot work. Two guards now:
+// the bare name is not probed on win32, and every candidate must be a FILE.
+check('bare "es" is not probed on win32', ES_NAMES_WIN32, ['es.exe'])
+check('bare "es" IS probed on posix', ES_NAMES_POSIX, ['es'])
+check(
+  'a DIRECTORY named es.exe is rejected',
+  findEsExe({
+    env: { PATH: 'C:\\Program Files\\PowerShell\\7', USERPROFILE: 'C:\\nope', ProgramFiles: 'C:\\PF' },
+    platform: 'win32',
+    exists: () => true,       // the path exists...
+    isFile: () => false,      // ...but it is a directory
+  }),
+  undefined,
+)
+check(
+  'the real file still wins when it exists',
+  findEsExe({
+    env: { PATH: 'C:\\tools', USERPROFILE: 'C:\\nope', ProgramFiles: 'C:\\PF' },
+    platform: 'win32',
+    exists: (p) => p.replace(/\\/g, '/').toLowerCase().endsWith('/tools/es.exe'),
+    isFile: () => true,
+  }),
+  'C:\\tools\\es.exe',
+)
 
 if (failed === 0) {
   console.log('')
