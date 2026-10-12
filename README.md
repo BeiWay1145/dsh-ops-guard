@@ -7,7 +7,11 @@
 | **下载守卫** | 大文件下载必须走 aria2 | `aria2-dl.cjs` → aria2-next (Motrix Next) |
 | **搜索守卫** | 按文件名找文件必须走 Everything | `es.exe` → voidtools Everything |
 
-两者共用同一套机制：在 `tools/pre-execute` 拦截，拒绝并给出**可直接粘贴的替代命令**。
+两者共用同一套机制：在 `tools/pre-execute` 拦截，然后给出替代通道。
+
+**搜索守卫更进一步**：它不再只是给一条命令，而是**直接把搜索结果返回给模型** ——
+通过 Everything 的常驻 IPC 通道（协议为逆向所得），查询在 DSH 进程内完成，
+模型无需再执行任何命令。
 
 ## 为什么需要它
 
@@ -64,9 +68,9 @@ es.exe -get-result-count "content:..."     → 无任何输出
 
 被拒时给出的理由里**明确告诉模型 grep 没被拦**，避免它转向别处绕路。
 
-### 📊 实测：收益取决于搜索范围，不是普遍加速
+### 📊 实测：收益取决于搜索范围
 
-这是**基准测试**给出的结论，与最初的假设不同，如实记录：
+最初的基准（守卫还只是"给命令"时）结论是**反直觉**的，如实保留：
 
 | 范围 | 内核 glob (rg) | es.exe | 谁快 |
 |---|---|---|---|
@@ -75,9 +79,9 @@ es.exe -get-result-count "content:..."     → 无任何输出
 | `D:\VibeCoding` | 82 ms | 40 ms | **es 快 2.1x** |
 | **整盘 `D:\`** | **1077 ms** | **40 ms** | **es 快 27x** |
 
-**原因**：es.exe 有 **~40 ms 固定开销**（进程启动 + IPC，实测 `-version` 就要 33 ms），而 ripgrep 的开销随目录树线性增长。
+**原因**：es.exe 有 **~40 ms 固定开销**（进程启动 + IPC），而 ripgrep 的开销随目录树线性增长。
 
-**结论**：守卫在**宽范围搜索**（跨项目、整盘）是显著净收益；在**窄范围**（单项目内）反而比内核 glob 慢 2–3 倍。跨查询中位数约 **3.1x** 加速，但方差极大。
+**但这一结论已被常驻 IPC 推翻** —— 见下节。如今窄范围也不再倒挂。
 
 ### ⚠️ 一个被基准抓出的真实缺陷
 
@@ -90,22 +94,25 @@ es -path D "src/**/*.ts"    218 ms     0 条   ← 完全错误，丢失全部�
 es -path D/src "*.ts"        41 ms     5 条   ← 正确
 ```
 
-即最初的建议命令**既慢 38 倍、又在带目录前缀时返回 0 条**——完全违背守卫初衷。现已在 `translateToEsPattern` 中修正并加了 7 条断言钉住。
+即最初的建议命令**既慢 38 倍、又在带目录前缀时返回 0 条**。现已在 `translateToEsPattern` 中修正并加了断言钉住。
 
-### glob → es.exe 的映射
+### glob → Everything 查询的映射
 
-模式语言几乎不用翻译（`**` 在两边都是递归的），只是参数名不同：
+模式语言几乎不用翻译（`*` 在两边都是文件名匹配），要处理的是**作用域**：
 
-| 内置 glob | es.exe |
+| 内置 glob | Everything 查询 |
 |---|---|
-| `pattern: "**/*.ts"` | `es.exe "**/*.ts"` |
-| `path: "D:\proj"` | `-path "D:\proj"` |
-| 省略 path（=工作区） | `-path <会话工作区>` |
+| `pattern: "**/*.ts"` | `*.ts`（`**/` 前缀多余，见上） |
+| `path: "D:\proj"` | `path:D:\proj `（**查询语法，不是 `-path`**） |
+| 省略 path | 取会话工作目录 |
 
-实测确认的两个细节：
+⚠️ **管道协议里没有 `-path`** —— 那是 es.exe 的命令行参数，线格式里并不存在。
+作用域必须写进查询本身：`path:<目录> <模式>`。已验证与 `es -path` **结果集合完全相同**（11 vs 11，零差异）。
+
+另有两个实测确认的细节：
 
 - **`**` 必须保留**：`src/**/*.ts` 能匹配 `src/__deep/probe.ts`，而 `src\*.ts` **不递归**。所以模式形状原样传递，不做扁平化。
-- **通配符要加引号**：不加引号的 `*.ts` 会被 shell 先展开，es.exe 根本看不到它。
+- **Everything 不按 shell 方式解析相对路径**：实测 `path:. *.md` 返回**整盘 24693 条**（静默地）。相对路径现按工作目录解析，无法解析时不猜、直接放弃限定。
 
 ### 为什么 es.exe 只在加载时探测一次
 
@@ -154,7 +161,7 @@ BLOCKED by dsh-ops-guard: this command downloads a file to disk
 (Motrix Next) so they are multithreaded, resumable and visible in the download manager.
 
 Use instead:
-  node "$env:USERPROFILE\.dsh\skills\aria2-download\scripts\aria2-dl.js" "<URL>" --out=<filename>
+  node "<本插件目录>\scripts\aria2-dl.cjs" "<URL>" --out=<filename>
 
 Options: --dir=<dir> for the destination, --header="K: V" for headers,
 --no-wait to enqueue and return immediately (then query with --status <gid>).
@@ -164,6 +171,35 @@ Blocked command: curl -o Win11.iso https://.../y.iso
 ```
 
 **URL 会被自动提取并填进建议命令**——被拒绝的一方不需要猜该怎么改。
+
+### 搜索守卫：直接给出结果
+
+搜索守卫的输出**不一样** —— 它不是给命令，而是**把结果一并返回**：
+
+```
+BLOCKED by dsh-ops-guard: the built-in glob tool was not run.
+(matched: glob — pattern "**/*.md", path "D:/proj")
+
+Everything already answered this query over its resident IPC pipe in 6.3 ms,
+so there is nothing for you to run:
+
+  total matches: 11
+
+        D:\proj\README.md
+        D:\proj\docs\everything-ipc-protocol.md
+        ...
+
+If you need a DIFFERENT query, es.exe speaks the same pattern language:
+  C:\Users\<user>\bin\es.exe -n 50 -path D:\proj "*.md"
+
+The grep tool is NOT affected: content search stays on the built-in tool.
+```
+
+三点值得注意：
+
+- **结果已经在里面了**，模型读完就能回答，不需要再发起工具调用
+- **耗时如实写出**（`in 6.3 ms`），让成本可见
+- **grep 仍然被明确豁免**，避免模型误以为内容搜索也被拦
 
 ## 随包分发的 forwarder
 
@@ -203,43 +239,40 @@ cd ~/.dsh && dsh plugin --profile <your-profile> add "dsh-ops-guard@github:BeiWa
 
 安装后**重启 DSH** 生效。
 
-## 性能边界：为什么不是普遍加速
+## 常驻 IPC：为什么守卫自己执行搜索
 
-内置 `glob` 用 ripgrep **每次调用都走目录树**；es.exe 走后端索引，但**每次调用都要启动一个进程**（实测 ~36ms 纯启动 + ~15ms IPC/查询）。
+最初守卫只做一件事：拒绝 `glob`，给出一条 `es.exe` 命令。**那是不够的** ——
+模型还得再发起一次工具调用、再付一次进程启动。
 
-**所以守卫不是普遍加速**：
+### 为什么不做一个 CLI 包装器
 
-| 场景 | rg（内核 glob） | es.exe | 谁快 |
-|---|---|---|---|
-| 单项目 | 19–30 ms | 48 ms | **rg 快 1.6–2.5x** |
-| 跨项目 `D:\VibeCoding` | 631 ms | 49 ms | **es 快 13x** |
-| 整盘 `D:\` | 7726 ms | 51 ms | **es 快 152x** |
+最自然的方案是写个小命令行客户端走管道。**先测了，发现会适得其反**：
 
-**能否消除 es.exe 的固定开销？** **能，已经接入并实测。**
+```
+node -e ""      58.5 ms   ← 裸进程启动
+es.exe          38.9 ms
+```
 
-我最初判断"命名管道是私有二进制协议，需逆向，不可行"。**这个判断是错的** ——
-协议已完整逆向（`src/everything-ipc.ts`），并接入守卫：
+**Node 启动比它要替代的 es.exe 还慢。** 常驻 IPC 只在**已经存活的进程内**才有价值，
+而守卫正是这样一个进程。它无法改写调用（`pre-execute` 只能 allow/deny/ask/cancel，
+已在 `dsh-tools/lib/index.js` 核实），所以唯一花掉这个优势的方式就是：
+**把答案算出来，放进拒绝理由里。**
 
-**守卫不再只是"拒绝 + 给命令"，而是直接返回结果。**
+### 协议（逆向所得）
 
 ```
 管道 : \\.\PIPE\Everything IPC
-请求 : [i32 cmd][i32 len][payload]      cmd=7 搜索
-响应 : 循环 { [i32 status][i32 len][body] }  100=中间帧 200=末帧 404=错误
+请求 : [i32 cmd][i32 len][payload]              cmd=7 搜索
+响应 : 循环 { [i32 status][i32 len][body] }     100=中间帧 200=末帧 404=错误
 记录 : [u8 flags(1=目录)][varint 长度][utf8 路径]
 ```
 
-### 为什么是"守卫自己执行"而不是"给条命令"
+逆向自 `es.exe` 1.1.0.37（Ghidra）。**实现细节与全部命令号**见
+[docs/everything-ipc-protocol.md](docs/everything-ipc-protocol.md)。
 
-实测：
-
-```
-node -e ""          58.5 ms   ← 裸进程启动
-es.exe              38.9 ms
-```
-
-**Node 启动比 es.exe 还慢**，所以 CLI 包装方案会适得其反。
-常驻 IPC 只在**已存活的进程内**才有意义 —— 守卫正是这样的进程。
+> 那个卡了一整轮的坑：请求里的长度字段是 **varint**，写成 u32 会让 Everything
+> **静默忽略查询** —— 响应结构依然完整、能正常解析、`total` 报 0，
+> 看起来像"没有匹配"而不是"格式错误"。
 
 ### 延迟实测（9 次中位数）
 
@@ -248,29 +281,35 @@ es.exe              38.9 ms
 | 单项目 `**/*.md` | 18.2 ms | 41.4 ms | **6.7 ms** | 2.7x | 6.2x |
 | 单项目 `**/*.ts` | 22.1 ms | 43.8 ms | **7.0 ms** | 3.2x | 6.3x |
 | 单项目 `**/*.json` | 18.8 ms | 42.8 ms | **6.3 ms** | 3.0x | 6.8x |
-| 跨项目 `D:/VibeCoding` | 483.6 ms | 43.3 ms | **6.9 ms** | 70x | 6.3x |
+| 跨项目 `D:/VibeCoding` | 483.6 ms | 43.3 ms | **6.9 ms** | **70.3x** | 6.3x |
 
-**关键**：守卫不仅比 es.exe 快 6.3 倍，还**省掉一次模型往返** ——
-结果直接写在拒绝理由里，模型无需再执行任何命令。
+**窄范围不再倒挂** —— 上一节的 2–3 倍劣势已经消失。
+
+而且还**省掉一次模型往返**：结果随拒绝理由一起返回，没有命令需要执行。
+这一项毫秒列反映不出来，但它省的是一整个 tool call。
 
 ```bash
 BENCH_REPS=9 node bench/guard-latency.mjs
 ```
 
 > ⚠️ 基准里 es.exe 那一列**必须**用 `translateToEsPattern` 翻译后的模式。
-> 用原始 `**/*.ts` 会得到 1400ms —— 那是本项目早已修复的缺陷，拿它当对照是立稻草人。
+> 用原始 `**/*.ts` 会得到 1400 ms —— 那是本项目早已修复的缺陷，
+> 拿它当对照会让守卫看起来快 175 倍（真实是 6.3 倍）。那是稻草人，不是基线。
 
-完整协议见 [docs/everything-ipc-protocol.md](docs/everything-ipc-protocol.md)，
-被推翻的早期调查见 [docs/resident-query-investigation.md](docs/resident-query-investigation.md)。
+### 回落路径
 
-⚠️ **回落路径**：Everything 未运行时，守卫自动退回"给命令"模式（`searchDenialMessage`），
-不会让搜索失效。
+**任何管道故障**（Everything 没运行、超时、协议变动）都会自动退回"给命令"模式
+（`searchDenialMessage`）。守卫不会因为 Everything 没跑就让搜索失效 ——
+把慢搜索变成没有搜索，比它要防的问题严重得多。
 
 ## 已知边界
 
 - **拦不住「命令内部的下载」**：`python script.py` 里用 `urllib` 下载，钩子看到的是 `python script.py`，看不到它内部在做什么。彻底收口需要本地代理层，不在本插件范围。
 - **拦不住非 DSH 发起的下载**：在 DSH 之外的终端里 `curl -o` 不受影响。
 - 依赖宿主提供 `tools/pre-execute` 钩子（已在 DSH 0.1.5-rc 系列上实测）。
+- **Everything 的 IPC 协议是私有的、未公开的**，任何版本都可能更改。已实现回落路径，
+  但若协议变动，守卫会静默退回"给命令"模式（功能不受影响，只是不再省那次往返）。
+- **搜索守卫回答的是文件名索引，不是内容**。这正是它不动 `grep` 的原因。
 
 ## 开发
 
@@ -280,12 +319,24 @@ npm test          # 构建 + 检测器单测 + 真实 ToolRuntime 运行时测�
 npm run typecheck
 ```
 
-测试分两层：
+测试分四层：
 
-- `tests/detect.test.mjs` — 纯函数检测规则（38 项，含大量「必须放行」的反例）
-- `tests/guard.runtime.mjs` — 把**构建产物**装进真实 cordis + ToolRuntime，验证 deny 真的拦住了工具体
+| 文件 | 覆盖 | 项数 |
+|---|---|---|
+| `tests/detect.test.mjs` | 下载检测规则（含大量「必须放行」的反例） | 65 |
+| `tests/search.test.mjs` | 搜索检测、模式翻译、查询作用域、es.exe 探测、拒绝文本 | 41 |
+| `tests/everything-ipc.test.mjs` | IPC 编解码（varint 往返、请求/响应布局、真实管道） | 22 |
+| `tests/guard.runtime.mjs` | 把**构建产物**装进真实 cordis + ToolRuntime，验证 deny 真的拦住了工具体 | 26 断言 |
+| `tests/ipc-guard.e2e.mjs` | 真实 ToolRuntime 端到端：断言拒绝理由里**带着结果**，而不是一条命令 | 8 断言 |
 
-运行时测试会自行在本机寻找已安装的 DSH 树；找不到时**跳过而非失败**，这样裸克隆仓库也能通过。
+前三层是纯函数，随时可跑。后两层会自行在本机寻找已安装的 DSH 树；找不到时**跳过而非失败**，这样裸克隆仓库也能通过。
+
+另有基准脚本：
+
+```bash
+BENCH_REPS=9 node bench/guard-latency.mjs   # 守卫 / 内置 glob / es.exe 三路对比
+node bench/after-restart.mjs                # 重启后一键验证（挂载 + 延迟 + 行为）
+```
 
 ## 许可
 
