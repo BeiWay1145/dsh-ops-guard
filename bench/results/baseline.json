@@ -1,0 +1,98 @@
+{
+  "when": "2026-10-12T06:02:11.938Z",
+  "rg": "D:/VibeCoding/DSH_Desktop/DSH Desktop/resources/app/node_modules/@vscode/ripgrep-win32-x64/bin/rg.exe",
+  "es": "C:\\Users\\BeiWay1145\\bin\\es.exe",
+  "reps": 5,
+  "rows": [
+    {
+      "label": "narrow: src/*.ts in one project",
+      "rgMed": 18.6417,
+      "rgP90": 21.1871,
+      "rgLines": 5,
+      "esMed": 47.3792,
+      "esP90": 48.8092,
+      "esLines": 5,
+      "rawMed": 1456.5295,
+      "rawLines": 5
+    },
+    {
+      "label": "project-wide: **/*.ts",
+      "rgMed": 29.8858,
+      "rgP90": 30.3889,
+      "rgLines": 223,
+      "esMed": 48.6521,
+      "esP90": 51.4125,
+      "esLines": 100,
+      "rawMed": 1429.3493,
+      "rawLines": 100
+    },
+    {
+      "label": "project-wide: **/*.json",
+      "rgMed": 25.9322,
+      "rgP90": 28.3364,
+      "rgLines": 28,
+      "esMed": 49.2562,
+      "esP90": 49.9401,
+      "esLines": 28,
+      "rawMed": 1411.3338,
+      "rawLines": 28
+    },
+    {
+      "label": "drive-wide: */**/*.mjs under projects",
+      "rgMed": 302.1237,
+      "rgP90": 343.5785,
+      "rgLines": 504,
+      "esMed": 50.2095,
+      "esP90": 57.4726,
+      "esLines": 100,
+      "rawMed": 1463.9619,
+      "rawLines": 100
+    },
+    {
+      "label": "drive-wide: **/*.log under projects",
+      "rgMed": 290.2252,
+      "rgP90": 292.1366,
+      "rgLines": 72,
+      "esMed": 48.9938,
+      "esP90": 51.3853,
+      "esLines": 72,
+      "rawMed": 1444.2117,
+      "rawLines": 72
+    },
+    {
+      "label": "big: **/*.dll under projects",
+      "rgMed": 288.4756,
+      "rgP90": 302.4282,
+      "rgLines": 119,
+      "esMed": 47.9079,
+      "esP90": 51.0648,
+      "esLines": 100,
+      "rawMed": 1445.5863,
+      "rawLines": 100
+    }
+  ],
+  "scaleRows": [
+    {
+      "label": "one project src/",
+      "rgMed": 18.3415,
+      "esMed": 47.7834
+    },
+    {
+      "label": "one project",
+      "rgMed": 28.6389,
+      "esMed": 49.7729
+    },
+    {
+      "label": "D:/VibeCoding",
+      "rgMed": 611.0977,
+      "esMed": 48.798
+    },
+    {
+      "label": "whole drive D:/",
+      "rgMed": 7553.6199,
+      "esMed": 47.1445
+    }
+  ],
+  "overallSpeedup": 3.268994219545506,
+  "overallSpeedupRaw": 0.11023239987687244
+}

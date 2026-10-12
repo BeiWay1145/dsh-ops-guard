@@ -12,6 +12,7 @@
  */
 import { strict as assert } from 'node:assert'
 import {
+  translateToEsPattern,
   inspectSearch,
   globArgsOf,
   esArgvFor,
@@ -53,11 +54,9 @@ check('string args', inspectSearch('glob', 'oops'), undefined)
 check('globArgsOf tolerates junk', globArgsOf({ pattern: 'x', path: 42 })?.path, undefined)
 
 // --- argv mapping ---------------------------------------------------------
-check(
-  'recursive pattern is preserved, not flattened',
-  esArgvFor({ rule: 'glob', pattern: 'src/**/*.ts' }, 'D:\\ws'),
-  ['-n', '50', '-path', 'D:\\ws', 'src/**/*.ts'],
-)
+// NOTE: an earlier assertion here required src/**/*.ts to pass through
+// unchanged. Benchmarking proved that form returns ZERO files from es.exe, so
+// the assertion was pinning a bug. The translation assertions below replace it.
 check(
   'explicit path beats the default root',
   esArgvFor({ rule: 'glob', pattern: '*.md', path: 'docs' }, 'D:\\ws'),
@@ -67,6 +66,47 @@ check(
   'no root at all -> no -path flag',
   esArgvFor({ rule: 'glob', pattern: '*.md' }),
   ['-n', '50', '*.md'],
+)
+
+// --- pattern translation (found by benchmarking, not by reading) ----------
+//
+// Everything's -path is already recursive over filenames, so a leading **/ is
+// redundant and expensive, and a **/ behind a directory prefix returns NOTHING.
+// These assertions pin the translation that fixes both.
+check(
+  'leading ** is dropped (38x faster, same hits)',
+  esArgvFor({ rule: 'glob', pattern: '**/*.ts' }, 'D:/p'),
+  ['-n', '50', '-path', 'D:/p', '*.ts'],
+)
+check(
+  'a directory prefix moves into -path (raw form returned 0 hits)',
+  esArgvFor({ rule: 'glob', pattern: 'src/**/*.ts', path: 'D:/p' }),
+  ['-n', '50', '-path', 'D:/p/src', '*.ts'],
+)
+check(
+  'a middle suffix is preserved',
+  esArgvFor({ rule: 'glob', pattern: 'src/**/*.test.mjs', path: 'D:/p' }),
+  ['-n', '50', '-path', 'D:/p/src', '*.test.mjs'],
+)
+check(
+  'a bare pattern without ** is untouched',
+  esArgvFor({ rule: 'glob', pattern: '*.ts' }, 'D:/p'),
+  ['-n', '50', '-path', 'D:/p', '*.ts'],
+)
+check(
+  'a wildcard in the prefix blocks translation',
+  esArgvFor({ rule: 'glob', pattern: 'a*/**/*.ts', path: 'D:/p' }),
+  ['-n', '50', '-path', 'D:/p', 'a*/**/*.ts'],
+)
+check(
+  'translation is a no-op on a plain pattern',
+  translateToEsPattern('*.ts', 'D:/p'),
+  { pattern: '*.ts', root: 'D:/p' },
+)
+check(
+  'trailing slash on the root does not double up',
+  translateToEsPattern('src/**/*.ts', 'D:/p/'),
+  { pattern: '*.ts', root: 'D:/p/src' },
 )
 
 // --- quoting --------------------------------------------------------------
@@ -89,7 +129,9 @@ const hit = { rule: 'glob', pattern: '**/*.ts', path: 'D:\\ws' }
 const withEs = searchDenialMessage(hit, 'C:\\bin\\es.exe', 'D:\\ws')
 assert.ok(withEs.includes('BLOCKED by dsh-ops-guard'), 'names the plugin')
 assert.ok(withEs.includes('es.exe'), 'names es.exe')
-assert.ok(withEs.includes('**/*.ts'), 'echoes the pattern')
+// The pattern is TRANSLATED before it is shown (the raw ** form returns
+// nothing from es.exe), so the message must contain the translated form.
+assert.ok(withEs.includes('*.ts'), 'echoes a runnable pattern')
 assert.ok(withEs.includes('grep tool is NOT affected'), 'tells the model grep still works')
 
 // The no-es.exe branch must NOT invent a command it cannot substantiate.

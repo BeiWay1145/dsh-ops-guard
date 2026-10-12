@@ -98,11 +98,59 @@ export function inspectSearch(name: string, args: unknown): SearchHit | undefine
  * @returns the argv vector, excluding the executable itself.
  */
 export function esArgvFor(hit: SearchHit, defaultRoot?: string): string[] {
-  const root = hit.path ?? defaultRoot
+  const translated = translateToEsPattern(hit.pattern, hit.path ?? defaultRoot)
   const argv = ['-n', '50']
-  if (root !== undefined && root !== '') argv.push('-path', root)
-  argv.push(hit.pattern)
+  if (translated.root !== undefined && translated.root !== '') argv.push('-path', translated.root)
+  argv.push(translated.pattern)
   return argv
+}
+
+/**
+ * Translate one glob pattern into the es.exe form that is both CORRECT and FAST.
+ *
+ * This exists because passing the pattern through unchanged was measured to be
+ * wrong twice over, and the benchmark is what caught it:
+ *
+ *   es -path D "**<slash>*.ts"    1525 ms   223 hits
+ *   es -path D "*.ts"               40 ms   223 hits   <- identical result, 38x faster
+ *   es -path D "src/**<slash>*.ts"  218 ms     0 hits   <- WRONG, loses every match
+ *   es -path D/src "*.ts"           41 ms     5 hits   <- correct
+ *
+ * Everything's -path is ALREADY recursive over filenames, so a **<slash> segment
+ * is redundant when it is the leading one — it costs a full drive walk for the
+ * same answer. With a directory prefix in front of it (src/**<slash>*.ts) it is
+ * not merely slow, it returns nothing at all.
+ *
+ * The translation is deliberately narrow. It only fires when:
+ *   - the pattern contains the double-star segment, and
+ *   - everything before it is a plain directory prefix with no wildcard, and
+ *   - something follows it.
+ * Any other shape is passed through untouched, because guessing at a pattern is
+ * how a search returns the wrong files while still looking like it worked.
+ *
+ * @param pattern - the glob pattern the model asked for.
+ * @param root - the search root, when one is known.
+ * @returns the es.exe pattern and the possibly-deepened root.
+ */
+export function translateToEsPattern(
+  pattern: string,
+  root: string | undefined,
+): { pattern: string; root: string | undefined } {
+  const STAR = '**/'
+  const at = pattern.indexOf(STAR)
+  if (at === -1) return { pattern, root }
+
+  const prefix = pattern.slice(0, at)
+  const rest = pattern.slice(at + STAR.length)
+  if (rest === '') return { pattern, root }
+  // A wildcard inside the prefix means it is not a plain directory, so it
+  // cannot move into -path; leave the pattern alone.
+  if (/[*?[\]]/.test(prefix)) return { pattern, root }
+
+  const dir = prefix.replace(/[/\\]+$/, '')
+  if (dir === '') return { pattern: rest, root }
+  const joined = root === undefined || root === '' ? dir : root.replace(/[/\\]+$/, '') + '/' + dir
+  return { pattern: rest, root: joined }
 }
 
 /**

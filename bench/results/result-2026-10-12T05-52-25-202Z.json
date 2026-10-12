@@ -1,0 +1,76 @@
+{
+  "when": "2026-10-12T05:52:25.202Z",
+  "rg": "D:/VibeCoding/DSH_Desktop/DSH Desktop/resources/app/node_modules/@vscode/ripgrep-win32-x64/bin/rg.exe",
+  "es": "C:\\Users\\BeiWay1145\\bin\\es.exe",
+  "reps": 5,
+  "rows": [
+    {
+      "label": "narrow: src/*.ts in one project",
+      "rgMed": 19.1734,
+      "rgP90": 20.7167,
+      "rgLines": 5,
+      "esMed": 48.9833,
+      "esP90": 50.4461,
+      "esLines": 5,
+      "rawMed": 1477.4483,
+      "rawLines": 5
+    },
+    {
+      "label": "project-wide: **/*.ts",
+      "rgMed": 29.6443,
+      "rgP90": 30.9048,
+      "rgLines": 223,
+      "esMed": 47.7296,
+      "esP90": 51.51,
+      "esLines": 100,
+      "rawMed": 1451.4721,
+      "rawLines": 100
+    },
+    {
+      "label": "project-wide: **/*.json",
+      "rgMed": 27.6409,
+      "rgP90": 28.1988,
+      "rgLines": 25,
+      "esMed": 46.8418,
+      "esP90": 48.9461,
+      "esLines": 25,
+      "rawMed": 1476.2962,
+      "rawLines": 25
+    },
+    {
+      "label": "drive-wide: */**/*.mjs under projects",
+      "rgMed": 292.1216,
+      "rgP90": 300.568,
+      "rgLines": 503,
+      "esMed": 49.5139,
+      "esP90": 53.6279,
+      "esLines": 100,
+      "rawMed": 1475.5424,
+      "rawLines": 100
+    },
+    {
+      "label": "drive-wide: **/*.log under projects",
+      "rgMed": 282.039,
+      "rgP90": 290.5808,
+      "rgLines": 72,
+      "esMed": 48.9413,
+      "esP90": 50.2572,
+      "esLines": 72,
+      "rawMed": 1517.2355,
+      "rawLines": 72
+    },
+    {
+      "label": "big: **/*.dll under projects",
+      "rgMed": 278.5142,
+      "rgP90": 282.1256,
+      "rgLines": 119,
+      "esMed": 49.3804,
+      "esP90": 51.2331,
+      "esLines": 100,
+      "rawMed": 1489.122,
+      "rawLines": 100
+    }
+  ],
+  "overallSpeedup": 3.130632727759479,
+  "overallSpeedupRaw": 0.10315683558337242
+}

@@ -192,7 +192,9 @@ assert.equal(globRes.isError, true, 'glob is refused')
 assert.equal(bodyRuns.length, 0, 'the glob body never ran')
 const globText = globRes.content.map((c) => c.text).join('')
 assert.ok(globText.includes('BLOCKED by dsh-ops-guard'), 'search reason reaches the model')
-assert.ok(globText.includes('**/*.ts'), 'search reason echoes the pattern')
+// The pattern is translated for es.exe before it is shown; the raw ** form
+// returns nothing there. Assert the runnable form, not the input form.
+assert.ok(globText.includes('*.ts'), 'search reason echoes a runnable pattern')
 assert.ok(globText.includes('C:\\proj'), 'search reason echoes the root')
 assert.ok(globText.includes('grep tool is NOT affected'), 'search reason names the working alternative')
 console.log('PASS blocked: glob denied, body skipped, es.exe route supplied')
