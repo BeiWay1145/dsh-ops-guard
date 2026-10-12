@@ -215,13 +215,32 @@ cd ~/.dsh && dsh plugin --profile <your-profile> add "dsh-ops-guard@github:BeiWa
 | 跨项目 `D:\VibeCoding` | 631 ms | 49 ms | **es 快 13x** |
 | 整盘 `D:\` | 7726 ms | 51 ms | **es 快 152x** |
 
-**能否消除 es.exe 的固定开销？** 命名管道的连接实测只要 **0.1 ms**，理论上可行；但三条常驻路径在本机**均不通**：
+**能否消除 es.exe 的固定开销？** **能，而且已证实。**
 
-- `\\.\pipe\Everything IPC` 接受连接后**不响应任何格式**（私有二进制协议，需逆向）
-- ETP 服务器与 HTTP 服务器**都未启用**（两份 ini 里都没有对应键）
-- es.exe **没有常驻模式**（`-help` 无 server/daemon/pipe 选项）
+我最初判断"命名管道是私有二进制协议，需逆向，不可行"。**这个判断是错的**——
+用 REA + Ghidra 逆向 `es.exe` 后，协议已完全破解：
 
-完整实测数据见 [docs/resident-query-investigation.md](docs/resident-query-investigation.md)。
+```
+管道 : \\.\PIPE\Everything IPC
+请求 : [i32 cmd][i32 len][payload]
+响应 : 循环 { [i32 status][i32 len][body] }  status: 100=中间帧, 200=结束, 404=错误
+搜索 : cmd = 7
+```
+
+实测对比：
+
+| 方式 | 中位耗时 |
+|---|---|
+| **IPC 直连** | **0.3 ms** |
+| es.exe | 47.8 ms |
+
+**约 160 倍。**
+
+完整协议见 [docs/everything-ipc-protocol.md](docs/everything-ipc-protocol.md)，
+此前的可行性调查（含被推翻的结论）见 [docs/resident-query-investigation.md](docs/resident-query-investigation.md)。
+
+⚠️ **尚未接入插件**：通道与帧格式已确认，但**结果集记录的完整解码**还需要工程工作量。
+当前守卫仍使用 es.exe。
 
 ## 已知边界
 
