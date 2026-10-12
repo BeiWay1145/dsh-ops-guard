@@ -19,6 +19,8 @@ import {
   renderCommand,
   shellQuote,
   searchDenialMessage,
+  searchAnsweredMessage,
+  buildEverythingQuery,
   UNTOUCHED_SEARCH_TOOL,
 } from '../src/search.ts'
 import { findEsExe, ES_NAMES_WIN32, ES_NAMES_POSIX } from '../src/es.ts'
@@ -187,6 +189,33 @@ check(
   }),
   'C:\\tools\\es.exe',
 )
+
+// --- query scoping (the whole-disk regression) ---------------------------
+//
+// With no root, buildEverythingQuery once produced a bare "*.md", and
+// Everything answered it from the ENTIRE INDEX: 24693 matches for a query the
+// caller meant as workspace-scoped. Verified live, not inferred.
+{
+  const WS = 'D:\\Code\\Reasonix_Projects\\test'
+  check('no root falls back to the workspace',
+    buildEverythingQuery('**/*.md', undefined, WS),
+    'path:' + WS + ' *.md')
+  check('a bare dot means the workspace',
+    buildEverythingQuery('**/*.md', '.', WS),
+    'path:' + WS + ' *.md')
+  check('a relative subdir is resolved',
+    buildEverythingQuery('**/*.ts', './src', WS),
+    'path:' + WS + '\\src *.ts')
+  check('a directory prefix in the pattern becomes the root',
+    buildEverythingQuery('docs/**/*.md', undefined, WS),
+    'path:' + WS + '/docs *.md')
+  check('an absolute root is left alone',
+    buildEverythingQuery('**/*.ts', 'C:/other', WS),
+    'path:C:/other *.ts')
+  check('a leading ** is stripped, not searched for',
+    buildEverythingQuery('**/*.md', WS, WS),
+    'path:' + WS + ' *.md')
+}
 
 if (failed === 0) {
   console.log('')

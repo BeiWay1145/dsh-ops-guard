@@ -173,7 +173,14 @@ export function apply(ctx: PluginContext): void {
           const started = Date.now()
           try {
             // Scoping rides inside the query: the pipe has no -path option.
-            const query = buildEverythingQuery(searchHit.pattern, searchHit.path, workspace)
+            //
+            // workspace is passed as the effective root, not just as a resolver
+            // for relative paths. The built-in glob tool defaults to the session
+            // workspace when no path is given, and this guard must answer the
+            // same question — passing undefined here made it search the entire
+            // disk (24693 matches for a query that should have seen a handful).
+            const effectiveRoot = searchHit.path ?? workspace
+            const query = buildEverythingQuery(searchHit.pattern, effectiveRoot, workspace)
             const answer = await searchEverything(query, { count: 50, timeoutMs: 2500 })
             reason = searchAnsweredMessage(
               searchHit,
