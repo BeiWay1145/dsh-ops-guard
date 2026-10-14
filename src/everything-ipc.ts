@@ -177,7 +177,13 @@ function makeCursor(buf: Buffer) {
 }
 
 /**
- * Decode one reply body into a total and a page of records.
+ * Decode a COMPLETE reply body into a total and a page of records.
+ *
+ * The argument must be every frame concatenated, not a single frame. Everything
+ * splits large result sets at the 64 KiB boundary, and the split does not respect
+ * record boundaries, so a later frame on its own has no header and its leading
+ * bytes are the tail of a path from the previous frame. Passing one frame at a
+ * time produces garbage that still looks structurally plausible.
  *
  * Written to fail loudly on a shape it does not recognise: a silently
  * mis-parsed reply would hand the model plausible-looking wrong paths, which
@@ -245,6 +251,8 @@ export async function searchEverything(
   return await new Promise<EverythingResult>((resolve, reject) => {
     const sock = net.connect(pipe)
     let buf = Buffer.alloc(0)
+    /** Every frame body, in arrival order. Only the first carries a header. */
+    const frames: Buffer[] = []
     let settled = false
     const finish = (fn: () => void) => { if (!settled) { settled = true; try { sock.destroy() } catch { /* already gone */ } ; fn() } }
     const timer = setTimeout(() => finish(() => reject(new Error('Everything IPC timed out after ' + timeoutMs + 'ms'))), timeoutMs)
@@ -263,14 +271,29 @@ export async function searchEverything(
         if (buf.length < 8 + len) return
         const body = buf.subarray(8, 8 + len)
         buf = buf.subarray(8 + len)
-        if (status === STATUS_MORE) continue
+        // A large result set arrives as SEVERAL frames, and the records are split
+        // at the 64 KiB boundary rather than at a record boundary: a single path
+        // really does continue from the end of one frame into the start of the
+        // next. Measured on "path:D:/VibeCoding *" with count=2000: four frames,
+        // with frame 0 ending mid-path ("...@jrid") and frame 1 beginning with the
+        // rest of it ("gewell...").
+        //
+        // So only the FIRST frame carries the header, and every later frame is
+        // pure record continuation. Decoding a later frame on its own reads path
+        // bytes as a header, which is how a previous version produced paths with
+        // embedded NULs and totals like 4856395977748921000.
+        if (status === STATUS_MORE) {
+          frames.push(body)
+          continue
+        }
         if (status !== STATUS_FINAL) {
           clearTimeout(timer)
           return finish(() => reject(new Error('Everything IPC rejected the request with status ' + status)))
         }
+        frames.push(body)
         clearTimeout(timer)
         try {
-          const decoded = decodeReply(body)
+          const decoded = decodeReply(Buffer.concat(frames))
           finish(() => resolve(decoded))
         } catch (error) {
           finish(() => reject(error instanceof Error ? error : new Error(String(error))))

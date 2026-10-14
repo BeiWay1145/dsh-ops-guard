@@ -87,5 +87,31 @@ try {
 }
 
 console.log('')
+
+// --- multi-frame replies (the silent-corruption bug) -----------------------
+//
+// Everything splits large result sets at the 64 KiB boundary, and the split
+// does NOT respect record boundaries: a path really does continue from the end
+// of one frame into the start of the next. Measured with count=2000, four
+// frames arrived, frame 0 ending "...@jrid" and frame 1 starting "gewell".
+//
+// The earlier decoder fed each frame to decodeReply separately, so a later
+// frame had no header and its leading path bytes were parsed as one. It still
+// returned a well-formed object — with paths containing NULs and totals like
+// 4856395977748921000. Silent corruption is the worst failure mode here,
+// because the model receives paths that look plausible.
+//
+// These run LIVE against the pipe, because the synthetic case cannot reproduce
+// the real 64 KiB split and it was the live path that caught this.
+try {
+  const big = await searchEverything("path:D:/VibeCoding *", { count: 2000, timeoutMs: 20000 })
+  check("live: a large page returns what was asked for", big.records.length, 2000)
+  check("live: no NUL leaks into any path", big.records.every((r) => !r.path.includes("\u0000")), true)
+  check("live: every path is absolute", big.records.every((r) => /^[A-Za-z]:/.test(r.path)), true)
+  check("live: the total is a plausible count, not garbage", big.total > 1000 && big.total < 100000000, true)
+} catch (error) {
+  console.log("  SKIP live multi-frame test (" + (error instanceof Error ? error.message : String(error)) + ")")
+}
+
 console.log('---- ' + passed + '/' + (passed + failed) + ' passed ----')
 if (failed > 0) process.exitCode = 1
