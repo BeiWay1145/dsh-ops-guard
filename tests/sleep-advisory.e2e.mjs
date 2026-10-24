@@ -98,5 +98,48 @@ const g = await call('pwsh', 'ls -la', { id: 's6' })
 check('ordinary commands are silent', !g.text.includes('dsh-ops-guard'))
 
 console.log('')
+
+// --- PTC sub-dispatches ----------------------------------------------------
+//
+// In PTC mode the model calls ONE tool (run_code) and every bash inside it is a
+// sub-dispatch that never reaches tools/post-execute. Found in a LIVE session
+// whose preset was still ptc: a real `sleep 21` produced no advisory, because
+// the listener above guards only the outer call.
+//
+// PTC counterpart is tools/ptc-dispatch-log. Both share one once-per-session
+// flag, so switching preset mid-session does not repeat the lecture.
+{
+  // Reuse the SAME context the plugin was applied to above. In production apply()
+  // runs once, so both listeners share one "already advised" flag; a second
+  // apply() would create a second set and the once-per-session test below would
+  // fail for a reason that cannot happen in a real session.
+  const ctxPtc = ctx
+  const S = { id: "ptc-session" }
+  const mkDispatch = (cmd) => ({
+    name: "bash",
+    exec: { arguments: { command: cmd } },
+    agent: { session: S },
+    content: [{ type: "text", text: "OUTPUT" }],
+  })
+  const run = (cmd) => ctxPtc.waterfall("tools/ptc-dispatch-log", mkDispatch(cmd), (d) => Promise.resolve(d.content))
+
+  const one = await run("sleep 60")
+  const oneText = (one ?? []).map((c) => c.text ?? "").join("\n")
+  check("ptc: advisory appears", oneText.includes("dsh-ops-guard") === true)
+  check("ptc: original content preserved", oneText.includes("OUTPUT") === true)
+
+  const two = await run("sleep 90")
+  const twoText = (two ?? []).map((c) => c.text ?? "").join("\n")
+  check("ptc: fires once per session", twoText.includes("dsh-ops-guard") === false)
+
+  const short = await run("sleep 3")
+  const shortText = (short ?? []).map((c) => c.text ?? "").join("\n")
+  check("ptc: short sleeps ignored", shortText.includes("dsh-ops-guard") === false)
+
+  const loop = await run("for i in 1..9; do sleep 50; done")
+  const loopText = (loop ?? []).map((c) => c.text ?? "").join("\n")
+  check("ptc: loop sleeps ignored", loopText.includes("dsh-ops-guard") === false)
+}
+
 console.log(pass + '/' + (pass + fail) + ' passed')
 if (fail > 0) process.exitCode = 1

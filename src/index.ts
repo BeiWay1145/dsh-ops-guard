@@ -95,6 +95,23 @@ export function denialMessage(rule: string, url: string | undefined, command: st
   return lines.join('\n')
 }
 
+/**
+ * The `tools/ptc-dispatch-log` payload, as emitted by the run_code bridge.
+ *
+ * Only the fields this plugin reads are declared; the real object also carries
+ * `subCallId` and `isError`, which are irrelevant to a hint.
+ */
+interface PtcDispatch {
+  /** Sub-tool name, e.g. 'bash'. */
+  name?: unknown
+  /** The sub-dispatch's own execution record; `arguments` carries `command`. */
+  exec?: { arguments?: unknown }
+  /** The agent that owns this dispatch, used to scope the once-per-session flag. */
+  agent?: { session?: object }
+  /** The content the bridge would have logged. */
+  content?: unknown
+}
+
 /** Minimal structural views, so the package needs no DSH type dependency. */
 interface PreExecuteExec {
   name?: unknown
@@ -105,6 +122,10 @@ interface PluginContext {
   on(
     event: 'tools/post-execute',
     listener: (exec: PreExecuteExec, result: unknown, next: () => Promise<unknown>) => Promise<unknown>,
+  ): () => void
+  on(
+    event: 'tools/ptc-dispatch-log',
+    listener: (dispatch: PtcDispatch, next: () => Promise<unknown>) => Promise<unknown>,
   ): () => void
   logger?: { info(msg: string): void; warn(msg: string): void }
 }
@@ -269,6 +290,46 @@ export function apply(ctx: PluginContext): void {
       }
     } catch {
       // An advisory must never turn a working call into a failure.
+    }
+    return next()
+  })
+
+  // --- the same advisory for PTC sub-dispatches ----------------------------
+  //
+  // WHY A SECOND LISTENER EXISTS AT ALL: in PTC mode the model calls ONE tool,
+  // `run_code`, and every `bash`/`pwsh` inside it is a SUB-dispatch. Those never
+  // reach `tools/post-execute` — that waterfall only guards the outer call — so
+  // the listener above is invisible to them. Verified in a live session whose
+  // preset was still `ptc`: a real `sleep 21` produced no advisory.
+  //
+  // PTC's counterpart is `tools/ptc-dispatch-log`, a waterfall over
+  // { exec, agent, subCallId, name, isError, content } that returns the content
+  // the bridge should log. Same shape of decision, different seam.
+  //
+  // Both listeners share ONE "already advised" flag on purpose: a session that
+  // switched preset mid-flight should not get the lecture twice.
+  ctx.on('tools/ptc-dispatch-log', async (dispatch, next) => {
+    try {
+      const name = typeof dispatch?.name === 'string' ? dispatch.name : ''
+      const args = (dispatch?.exec as { arguments?: unknown } | undefined)?.arguments
+      const seconds = inspectSleep(name, args)
+      if (seconds !== undefined) {
+        const sessionOwner = (dispatch as { agent?: { session?: object } })?.agent?.session
+        const key = (sessionOwner ?? ctx) as object
+        if (!sleepAdvised.has(key)) {
+          sleepAdvised.add(key)
+          const base = dispatch?.content
+          const content = Array.isArray(base) ? base : []
+          try {
+            ctx.logger?.info(PLUGIN_NAME + ': advised (ptc) on a ' + Math.round(seconds) + 's blind sleep')
+          } catch {
+            /* logging must never affect the result */
+          }
+          return [...content, { type: 'text', text: sleepAdvisory(seconds) }]
+        }
+      }
+    } catch {
+      // An advisory must never turn a working dispatch into a failure.
     }
     return next()
   })
