@@ -287,6 +287,21 @@ scripts/aria2-dl.cjs
 该脚本**只走 JSON-RPC**（不依赖 `aria2c.exe`），要求本机运行 **aria2-next** 引擎
 （Motrix Next 内置）。引擎未启动时会明确报错，而不是静默失败。
 
+### 盲等提示的作用范围（只在 native 模式）
+
+`tools/post-execute` 上的盲等提示**不覆盖 PTC 模式**。这是内核契约限制，不是疏漏：
+
+- PTC 模式下模型只调一个 `run_code`，其中每个 `bash` / `pwsh` 都是**子调用**，
+  不经过 `tools/post-execute`
+- PTC 的对应钩子 `tools/ptc-dispatch-log` 确实会触发，但它的载荷是
+  `{ exec, agent, subCallId, name, isError, content }` —— **没有 `arguments`**
+- 桥接层传入的是**外层 `run_code` 的 exec**，而不是子调用参数，因此监听器
+  拿不到命令字符串。实测探针记录为 `name=bash cmd=`（空）
+
+走 native（因此包含提示）的 preset：`standard`、`minimal`、`cordis`、`tavernweave`
+—— 它们都不配置 `tool-presentation`，内核默认 `mode: native`。
+只有显式选择 PTC 的 preset 落在覆盖范围之外。
+
 ### 环境变量
 
 | 变量 | 默认 | 说明 |
@@ -342,9 +357,9 @@ npm run typecheck
 > 都扫描 `~/.dsh/*/node_modules/.pnpm` 取**第一个** `dsh-tools`。本机第一个是
 > `dsh-android-fork@0.1.5-rc.1`，而 desktop 实际加载 `0.2.1-rc.2`。
 >
-> 后果是「测试全绿但功能不工作」：一个挂在 `tools/ptc-dispatch-log` 的监听器
-> 在 0.1.5-rc.1 上通过 17 条断言，在真实应用里**完全没被调用** —— 两个内核对
-> 这个钩子的到达路径不同。靠一次重启 + 一句 `sleep 21` 没反应才发现。
+> 后果是「测试全绿但功能不工作」：一批断言在 0.1.5-rc.1 上全部通过，真实应用里
+> 却毫无反应 —— 两个内核的代码路径不同，旧内核上通过的结论对新内核不成立。
+> 靠一次重启 + 一句 `sleep 21` 没反应才发现。
 
 `tests/kernel-host.test.mjs` 现在守着这件事：断言解析结果**必须是打包应用**、
 必须是 trusted、版本必须与应用自带的一致、且**不能**是 android-fork。

@@ -95,23 +95,6 @@ export function denialMessage(rule: string, url: string | undefined, command: st
   return lines.join('\n')
 }
 
-/**
- * The `tools/ptc-dispatch-log` payload, as emitted by the run_code bridge.
- *
- * Only the fields this plugin reads are declared; the real object also carries
- * `subCallId` and `isError`, which are irrelevant to a hint.
- */
-interface PtcDispatch {
-  /** Sub-tool name, e.g. 'bash'. */
-  name?: unknown
-  /** The sub-dispatch's own execution record; `arguments` carries `command`. */
-  exec?: { arguments?: unknown }
-  /** The agent that owns this dispatch, used to scope the once-per-session flag. */
-  agent?: { session?: object }
-  /** The content the bridge would have logged. */
-  content?: unknown
-}
-
 /** Minimal structural views, so the package needs no DSH type dependency. */
 interface PreExecuteExec {
   name?: unknown
@@ -122,10 +105,6 @@ interface PluginContext {
   on(
     event: 'tools/post-execute',
     listener: (exec: PreExecuteExec, result: unknown, next: () => Promise<unknown>) => Promise<unknown>,
-  ): () => void
-  on(
-    event: 'tools/ptc-dispatch-log',
-    listener: (dispatch: PtcDispatch, next: () => Promise<unknown>) => Promise<unknown>,
   ): () => void
   logger?: { info(msg: string): void; warn(msg: string): void }
 }
@@ -294,58 +273,25 @@ export function apply(ctx: PluginContext): void {
     return next()
   })
 
-  // --- the same advisory for PTC sub-dispatches ----------------------------
+  // PTC mode carries NO advisory, and this is a deliberate limit rather than a
+  // gap left open.
   //
-  // WHY A SECOND LISTENER EXISTS AT ALL: in PTC mode the model calls ONE tool,
-  // `run_code`, and every `bash`/`pwsh` inside it is a SUB-dispatch. Those never
-  // reach `tools/post-execute` — that waterfall only guards the outer call — so
-  // the listener above is invisible to them. Verified in a live session whose
-  // preset was still `ptc`: a real `sleep 21` produced no advisory.
+  // In PTC mode the model calls one tool (`run_code`) and every shell call inside
+  // it is a sub-dispatch. Those never reach `tools/post-execute`, so the listener
+  // above cannot see them. The PTC counterpart `tools/ptc-dispatch-log` does fire,
+  // but its payload is
   //
-  // PTC's counterpart is `tools/ptc-dispatch-log`, a waterfall over
-  // { exec, agent, subCallId, name, isError, content } that returns the content
-  // the bridge should log. Same shape of decision, different seam.
+  //   { exec, agent, subCallId, name, isError, content }
   //
-  // Both listeners share ONE "already advised" flag on purpose: a session that
-  // switched preset mid-flight should not get the lecture twice.
-  ctx.on('tools/ptc-dispatch-log', async (dispatch, next) => {
-    try {
-      try {
-        const { appendFileSync } = await import('node:fs')
-        const d = dispatch as PtcDispatch
-        appendFileSync(
-          'C:/Users/BeiWay1145/AppData/Local/Temp/ptc-probe.log',
-          new Date().toISOString()
-            + ' name=' + String(d.name)
-            + ' cmd=' + String((d.exec?.arguments as { command?: unknown } | undefined)?.command ?? '').slice(0, 40)
-            + ' hasSession=' + (d.agent?.session !== undefined)
-            + ' alreadyAdvised=' + (d.agent?.session !== undefined ? sleepAdvised.has(d.agent.session as object) : 'n/a')
-            + '\n',
-        )
-      } catch { /* probe must not affect anything */ }
-      const name = typeof dispatch?.name === 'string' ? dispatch.name : ''
-      const args = (dispatch?.exec as { arguments?: unknown } | undefined)?.arguments
-      const seconds = inspectSleep(name, args)
-      if (seconds !== undefined) {
-        const sessionOwner = (dispatch as { agent?: { session?: object } })?.agent?.session
-        const key = (sessionOwner ?? ctx) as object
-        if (!sleepAdvised.has(key)) {
-          sleepAdvised.add(key)
-          const base = dispatch?.content
-          const content = Array.isArray(base) ? base : []
-          try {
-            ctx.logger?.info(PLUGIN_NAME + ': advised (ptc) on a ' + Math.round(seconds) + 's blind sleep')
-          } catch {
-            /* logging must never affect the result */
-          }
-          return [...content, { type: 'text', text: sleepAdvisory(seconds) }]
-        }
-      }
-    } catch {
-      // An advisory must never turn a working dispatch into a failure.
-    }
-    return next()
-  })
+  // — note the absence of `arguments`. The bridge passes the OUTER run_code exec,
+  // not the sub-dispatch arguments, so the command string is simply not available
+  // to a listener. Verified by reading the bridge in dsh-tools and by a live
+  // probe that logged `cmd=` empty. There is no way to detect a sleep from that
+  // payload, and reaching the arguments would need a different seam entirely.
+  //
+  // Since the shells in PTC mode cannot be inspected, they get no hint. Native
+  // mode (every preset that does not select PTC: standard, minimal, cordis,
+  // tavernweave) is covered by the listener above.
 }
 
 /**
