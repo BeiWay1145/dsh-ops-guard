@@ -53,7 +53,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/build.mjs && node tests/detect.test.mjs && node tests/search.test.mjs && node tests/everything-ipc.test.mjs && node tests/guard.runtime.mjs && node tests/ipc-guard.e2e.mjs && node tests/sleep-advisory.test.mjs && node tests/sleep-advisory.e2e.mjs"
+    "test": "node scripts/build.mjs && node tests/kernel-host.test.mjs && node tests/detect.test.mjs && node tests/search.test.mjs && node tests/everything-ipc.test.mjs && node tests/guard.runtime.mjs && node tests/ipc-guard.e2e.mjs && node tests/sleep-advisory.test.mjs && node tests/sleep-advisory.e2e.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

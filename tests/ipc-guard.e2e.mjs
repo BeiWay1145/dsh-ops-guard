@@ -14,33 +14,17 @@ import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
+import { findDshKernel } from './kernel-host.mjs'
 
 function safeReaddir(p) { try { return readdirSync(p) } catch { return [] } }
 
-function findHostModules() {
-  const candidates = []
-  const dshHome = join(homedir(), '.dsh')
-  const stores = []
-  for (const entry of safeReaddir(dshHome)) {
-    const pnpm = join(dshHome, entry, 'node_modules', '.pnpm')
-    if (existsSync(pnpm)) stores.push(pnpm)
-  }
-  for (const store of stores) {
-    for (const dir of safeReaddir(store)) {
-      if (!dir.startsWith('@deepseek-ai+dsh-tools@')) continue
-      const nm = join(store, dir, 'node_modules')
-      if (existsSync(join(nm, '@deepseek-ai', 'dsh-tools'))) candidates.push(nm)
-    }
-  }
-  return candidates
-}
-
-const hosts = findHostModules()
-if (hosts.length === 0) {
-  console.log('SKIP ipc guard e2e: no installed DSH tree with dsh-tools found.')
-  process.exit(0)
-}
-const load = (pkg) => import(pathToFileURL(join(hosts[0], '@deepseek-ai', pkg, 'lib', 'index.js')).href)
+// Shared kernel resolution; see tests/kernel-host.mjs for why a local copy of
+// this logic silently tested the wrong build.
+const kernel = findDshKernel()
+if (kernel === undefined) { console.log('SKIP ipc guard e2e: no DSH kernel found'); process.exit(0) }
+if (kernel.trusted === false) console.log('WARN: untrusted kernel root (' + kernel.reason + ')')
+console.log('kernel: ' + kernel.version + ' @ ' + kernel.root)
+const load = (pkg) => import(pathToFileURL(join(kernel.root, '@deepseek-ai', pkg, 'lib', 'index.js')).href)
 const { Context, Service } = await load('cordis')
 const { ToolRuntime, defineTool } = await load('dsh-tools')
 

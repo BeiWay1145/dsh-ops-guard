@@ -17,39 +17,24 @@ import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
+import { findDshKernel } from './kernel-host.mjs'
 
-/** Find a directory where @deepseek-ai/cordis and @deepseek-ai/dsh-tools resolve. */
-function findHostModules() {
-  const candidates = []
-  // A store directory that also holds dsh-tools is the reliable shape:
-  // pnpm symlinks every sibling dependency next to it.
-  const stores = []
-  const dshHome = join(homedir(), '.dsh')
-  for (const entry of safeReaddir(dshHome)) {
-    const pnpm = join(dshHome, entry, 'node_modules', '.pnpm')
-    if (existsSync(pnpm)) stores.push(pnpm)
-  }
-  for (const store of stores) {
-    for (const dir of safeReaddir(store)) {
-      if (!dir.startsWith('@deepseek-ai+dsh-tools@')) continue
-      const nm = join(store, dir, 'node_modules')
-      if (existsSync(join(nm, '@deepseek-ai', 'dsh-tools'))) candidates.push(nm)
-    }
-  }
-  return candidates
-}
-
-function safeReaddir(p) {
-  try { return readdirSync(p) } catch { return [] }
-}
-
-const hosts = findHostModules()
-if (hosts.length === 0) {
-  console.log('SKIP runtime guard test: no installed DSH tree with dsh-tools found.')
-  console.log('     (run this in a checkout of a machine that has DSH installed)')
+// Kernel resolution lives in one place now. Every copy of this logic used to
+// scan ~/.dsh/*/node_modules/.pnpm and take the first dsh-tools it found, which
+// on this machine was dsh-android-fork@0.1.5-rc.1 — a fork the desktop app does
+// not load. See tests/kernel-host.mjs for why that produced false-green tests.
+const kernel = findDshKernel()
+if (kernel === undefined) {
+  console.log('SKIP runtime guard test: no DSH kernel found.')
+  console.log('     (set DSH_KERNEL_ROOT, or install DSH Desktop)')
   process.exit(0)
 }
-const host = hosts[0]
+if (kernel.trusted === false) {
+  console.log('WARN: using an untrusted kernel root (' + kernel.reason + '), version ' + kernel.version)
+  console.log('      this may NOT be the build the desktop app loaded')
+}
+console.log('kernel: ' + kernel.version + ' @ ' + kernel.root)
+const host = kernel.root
 const load = (pkg) => import(pathToFileURL(join(host, '@deepseek-ai', pkg, 'lib', 'index.js')).href)
 
 const { Context, Service } = await load('cordis')

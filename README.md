@@ -330,10 +330,31 @@ npm test          # 构建 + 全部测试
 npm run typecheck
 ```
 
-测试分五层：
+### 测试跑在哪个内核上（重要）
+
+`tests/kernel-host.mjs` 负责解析 DSH 内核，**顺序不能改**：
+
+1. 打包的 desktop 应用（`resources/app/node_modules`）—— **这才是实际运行的**
+2. `DSH_KERNEL_ROOT` 环境变量覆盖
+3. `~/.dsh` 下的 pnpm store —— **仅作兜底，标记为 untrusted**
+
+> ⚠️ **这曾是本项目最严重的测试缺陷。** 每个测试原本各自实现一遍解析逻辑，
+> 都扫描 `~/.dsh/*/node_modules/.pnpm` 取**第一个** `dsh-tools`。本机第一个是
+> `dsh-android-fork@0.1.5-rc.1`，而 desktop 实际加载 `0.2.1-rc.2`。
+>
+> 后果是「测试全绿但功能不工作」：一个挂在 `tools/ptc-dispatch-log` 的监听器
+> 在 0.1.5-rc.1 上通过 17 条断言，在真实应用里**完全没被调用** —— 两个内核对
+> 这个钩子的到达路径不同。靠一次重启 + 一句 `sleep 21` 没反应才发现。
+
+`tests/kernel-host.test.mjs` 现在守着这件事：断言解析结果**必须是打包应用**、
+必须是 trusted、版本必须与应用自带的一致、且**不能**是 android-fork。
+任何把 pnpm 扫描排回前面的改动会立刻失败。
+
+测试分六层：
 
 | 文件 | 覆盖 | 项数 |
 |---|---|---|
+| `tests/kernel-host.test.mjs` | **内核解析守护**：必须指向打包应用，不能是 android-fork | 12 |
 | `tests/detect.test.mjs` | 下载检测规则（含大量「必须放行」的反例） | 65 |
 | `tests/search.test.mjs` | 搜索检测、模式翻译、查询作用域、es.exe 探测、拒绝文本 | 41 |
 | `tests/everything-ipc.test.mjs` | IPC 编解码（varint 往返、请求/响应布局、真实管道） | 22 |

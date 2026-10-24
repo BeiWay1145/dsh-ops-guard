@@ -310,6 +310,19 @@ export function apply(ctx: PluginContext): void {
   // switched preset mid-flight should not get the lecture twice.
   ctx.on('tools/ptc-dispatch-log', async (dispatch, next) => {
     try {
+      try {
+        const { appendFileSync } = await import('node:fs')
+        const d = dispatch as PtcDispatch
+        appendFileSync(
+          'C:/Users/BeiWay1145/AppData/Local/Temp/ptc-probe.log',
+          new Date().toISOString()
+            + ' name=' + String(d.name)
+            + ' cmd=' + String((d.exec?.arguments as { command?: unknown } | undefined)?.command ?? '').slice(0, 40)
+            + ' hasSession=' + (d.agent?.session !== undefined)
+            + ' alreadyAdvised=' + (d.agent?.session !== undefined ? sleepAdvised.has(d.agent.session as object) : 'n/a')
+            + '\n',
+        )
+      } catch { /* probe must not affect anything */ }
       const name = typeof dispatch?.name === 'string' ? dispatch.name : ''
       const args = (dispatch?.exec as { arguments?: unknown } | undefined)?.arguments
       const seconds = inspectSleep(name, args)

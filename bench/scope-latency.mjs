@@ -19,6 +19,7 @@ import { existsSync, readdirSync, mkdirSync, writeFileSync, rmSync } from 'node:
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
+import { findDshKernel } from '../tests/kernel-host.mjs'
 import { spawnSync } from 'node:child_process'
 
 const REPS = Number(process.env.BENCH_REPS ?? 11)
@@ -29,22 +30,12 @@ function median(xs) { const s = [...xs].sort((a, b) => a - b); return s[Math.flo
 async function time(fn) { const t = process.hrtime.bigint(); await fn(); return Number(process.hrtime.bigint() - t) / 1e6 }
 function safeReaddir(x) { try { return readdirSync(x) } catch { return [] } }
 
-function findHostModules() {
-  const out = []
-  const dshHome = join(homedir(), '.dsh')
-  for (const entry of safeReaddir(dshHome)) {
-    for (const dir of safeReaddir(join(dshHome, entry, 'node_modules', '.pnpm'))) {
-      if (!dir.startsWith('@deepseek-ai+dsh-tools@')) continue
-      const nm = join(dshHome, entry, 'node_modules', '.pnpm', dir, 'node_modules')
-      if (existsSync(join(nm, '@deepseek-ai', 'dsh-tools'))) out.push(nm)
-    }
-  }
-  return out
-}
-
-const hosts = findHostModules()
-if (hosts.length === 0) { console.log('SKIP: no installed DSH tree found'); process.exit(0) }
-const load = (x) => import(pathToFileURL(join(hosts[0], '@deepseek-ai', x, 'lib', 'index.js')).href)
+// Shared kernel resolution; see tests/kernel-host.mjs.
+const kernel = findDshKernel()
+if (kernel === undefined) { console.log('SKIP: no DSH kernel found'); process.exit(0) }
+if (kernel.trusted === false) console.log('WARN: untrusted kernel root (' + kernel.reason + ')')
+console.log('kernel: ' + kernel.version + ' @ ' + kernel.root)
+const load = (x) => import(pathToFileURL(join(kernel.root, '@deepseek-ai', x, 'lib', 'index.js')).href)
 const { Context, Service } = await load('cordis')
 const { ToolRuntime, defineTool } = await load('dsh-tools')
 
